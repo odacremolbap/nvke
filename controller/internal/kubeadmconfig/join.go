@@ -64,6 +64,9 @@ type JoinConfig struct {
 	// KubeReservedMemory is the memory reserved for Kubernetes processes by the
 	// kubelet configuration patch. It defaults to 2Gi when empty.
 	KubeReservedMemory string
+	// LoadBalancedEndpoint is set when the cluster's API server endpoint is a load
+	// balancer. A joining control plane then gets the longer termination grace period.
+	LoadBalancedEndpoint bool
 }
 
 // NewJoinConfigFromString parses the join configuration from a kubeadm join string.
@@ -202,7 +205,7 @@ func (config *JoinConfig) Render() (*BootstrapArtifacts, error) {
 	if config.ControlPlane {
 		artifacts.Files = append(
 			artifacts.Files,
-			apiServerTerminationGracePatch(),
+			apiServerTerminationGracePatch(config.LoadBalancedEndpoint),
 			apiServerAuditPolicyFile(),
 		)
 	}

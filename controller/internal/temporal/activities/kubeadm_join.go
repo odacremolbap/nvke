@@ -122,6 +122,7 @@ func (a *Activities) kubeadmJoin(ctx context.Context, node db.Node) (KubeadmJoin
 		return KubeadmJoinResult{}, err
 	}
 	joinConfig.KubernetesVersion = cluster.KubernetesVersion
+	joinConfig.LoadBalancedEndpoint = cluster.IsLoadBalancedEndpoint()
 	joinConfig.SystemReservedMemory = nodePool.SystemReservedMemory
 	joinConfig.KubeReservedMemory = nodePool.KubeReservedMemory
 

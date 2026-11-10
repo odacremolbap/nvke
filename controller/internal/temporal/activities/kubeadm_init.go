@@ -6,12 +6,16 @@ package activities
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	nvkeproto "github.com/dsx-ai-factory/nvke/agent/pkg/agent/proto"
 
@@ -76,10 +80,14 @@ func (a *Activities) kubeadmInit(ctx context.Context, input KubeadmInitInput) er
 		return err
 	}
 
-	// Use the control plane VIP if set, otherwise fallback to the node IP
-	controlPlaneEndpoint := cluster.ControlPlaneVIP
-	if controlPlaneEndpoint == "" {
-		controlPlaneEndpoint = node.IP
+	if cluster.EndpointType() == db.ControlPlaneEndpointInfrastructure {
+		if cluster, err = a.waitForInfrastructureEndpoint(ctx, cluster); err != nil {
+			return err
+		}
+	}
+	controlPlaneEndpoint, certSANs, err := resolveKubeadmControlPlaneEndpoint(cluster, node.IP)
+	if err != nil {
+		return err
 	}
 
 	status, err := a.nodeAgentClient.GetKubeadmStatus(ctx, node)
@@ -104,6 +112,8 @@ func (a *Activities) kubeadmInit(ctx context.Context, input KubeadmInitInput) er
 	initConfig := &kubeadmconfig.InitConfig{
 		NodeIP:                node.IP,
 		APIServerEndpoint:     controlPlaneEndpoint,
+		APIServerCertSANs:     certSANs,
+		LoadBalancedEndpoint:  cluster.IsLoadBalancedEndpoint(),
 		NodeName:              node.Name,
 		KubernetesVersion:     cluster.KubernetesVersion,
 		PodSubnet:             cluster.PodCIDR,
@@ -251,4 +261,54 @@ func (a *Activities) waitForKubeadmInitReady(ctx context.Context, node db.Node, 
 		case <-ticker.C:
 		}
 	}
+}
+
+// resolveKubeadmControlPlaneEndpoint returns the controlPlaneEndpoint kubeadm init is
+// given, and the certificate SANs to add. A kube-vip cluster uses its VIP and a cluster
+// with no stable endpoint uses the node's IP, both without a port as before. A load
+// balancer endpoint is passed as host:port and its host is added to the certificate.
+func resolveKubeadmControlPlaneEndpoint(cluster db.Cluster, nodeIP string) (string, []string, error) {
+	switch cluster.EndpointType() {
+	case db.ControlPlaneEndpointExternal, db.ControlPlaneEndpointInfrastructure:
+		host, port := cluster.ControlPlaneEndpointAddress()
+		if host == "" {
+			return "", nil, fmt.Errorf("control-plane endpoint of type %s has no host yet", cluster.EndpointType())
+		}
+		return net.JoinHostPort(host, strconv.Itoa(port)), []string{host}, nil
+	case db.ControlPlaneEndpointKubeVIP:
+		return cluster.ControlPlaneVIP, nil, nil
+	case db.ControlPlaneEndpointNone:
+		return nodeIP, nil, nil
+	}
+	return nodeIP, nil, nil
+}
+
+// waitForInfrastructureEndpoint returns the cluster with the endpoint its infrastructure
+// provider reported, which the CAPI Cluster controller copies from the infrastructure
+// cluster onto the CAPI Cluster. kubeadm init needs it before it starts, because it goes
+// into the certificates and every kubeconfig. Until it is reported the error is
+// retryable, and the endpoint is stored on first sight so a later retry reuses it.
+func (a *Activities) waitForInfrastructureEndpoint(ctx context.Context, cluster db.Cluster) (db.Cluster, error) {
+	if host, _ := cluster.ControlPlaneEndpointAddress(); host != "" {
+		return cluster, nil
+	}
+	if a.k8sClient == nil {
+		return cluster, fmt.Errorf("kubernetes client is not configured")
+	}
+	capiCluster := &clusterv1.Cluster{}
+	key := ctrlclient.ObjectKey{Name: cluster.Name, Namespace: a.cfg.ManagementNamespaceOrDefault()}
+	if err := a.k8sClient.Get(ctx, key, capiCluster); err != nil {
+		return cluster, fmt.Errorf("getting CAPI cluster %s: %w", cluster.Name, err)
+	}
+	endpoint := capiCluster.Spec.ControlPlaneEndpoint
+	if !endpoint.IsValid() {
+		return cluster, fmt.Errorf("the infrastructure provider has not reported a control-plane endpoint for cluster %s yet", cluster.Name)
+	}
+	port := int(endpoint.Port)
+	if err := a.db.SetClusterControlPlaneEndpoint(ctx, cluster.ID, endpoint.Host, port); err != nil {
+		return cluster, err
+	}
+	cluster.ControlPlaneEndpointHost = endpoint.Host
+	cluster.ControlPlaneEndpointPort = port
+	return cluster, nil
 }
