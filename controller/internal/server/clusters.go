@@ -320,11 +320,8 @@ func (s *clusterService) preflightCheckCreateClusterRequest(
 	if err := validatePodCIDRCapacity(network.podCIDRPrefixes, desiredNodes, cpSurge); err != nil {
 		return resolvedClusterNetwork{}, newBadRequestErrorf("%s", err)
 	}
-	controlPlaneVIP := strings.TrimSpace(req.ControlPlaneVIP)
-	if controlPlaneVIP != "" {
-		if err := network.validateControlPlaneVIP(controlPlaneVIP); err != nil {
-			return resolvedClusterNetwork{}, newBadRequestErrorf("%s", err)
-		}
+	if err := validateControlPlaneEndpoint(req, network); err != nil {
+		return resolvedClusterNetwork{}, err
 	}
 
 	// When the control plane is configured at the cluster level for a Forge
@@ -451,7 +448,7 @@ func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClust
 	}); err != nil {
 		return fmt.Errorf("controlPlaneConfig: %w", err)
 	}
-	if err := s.validateControlPlaneCapacityChange(req.ControlPlaneVIP, 0, req.ControlPlaneConfig.DesiredCount); err != nil {
+	if err := s.validateControlPlaneCapacityChange(requestHasControlPlaneEndpoint(req), 0, req.ControlPlaneConfig.DesiredCount); err != nil {
 		return err
 	}
 
@@ -697,7 +694,7 @@ func (s *clusterService) UpdateCluster(ctx context.Context, req api.UpdateCluste
 			if err := ValidateKubernetesVersionSkewWithControlPlane(dbCluster.KubernetesVersion, *req.Body.ControlPlaneKubernetesVersion); err != nil {
 				return err
 			}
-			if err := s.validateControlPlaneUpgrade(dbCluster.ControlPlaneVIP); err != nil {
+			if err := s.validateControlPlaneUpgrade(dbCluster.HasStableControlPlaneEndpoint()); err != nil {
 				return err
 			}
 
@@ -985,7 +982,7 @@ func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Contex
 		}
 	}
 	if err := s.validateControlPlaneRollout(
-		cluster.ControlPlaneVIP,
+		cluster.HasStableControlPlaneEndpoint(),
 		db.IsControlPlaneRolloutRequired(cluster.ControlPlaneConfig.ControlPlaneConfigSpec, controlPlaneConfigSpec),
 	); err != nil {
 		return err
@@ -1048,7 +1045,7 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 			return newBadRequestErrorf("controlPlaneConfig.desiredCount must be at least 1")
 		}
 		if err := s.validateControlPlaneCapacityChange(
-			cluster.ControlPlaneVIP,
+			cluster.HasStableControlPlaneEndpoint(),
 			cluster.ControlPlaneConfig.DesiredCount,
 			*req.DesiredCount,
 		); err != nil {
@@ -1412,6 +1409,7 @@ func APIClusterFromDB(dbCluster *db.Cluster) api.Cluster {
 		EtcdEncrypted:                 dbCluster.EtcdEncrypted,
 		ControlPlaneKubernetesVersion: dbCluster.KubernetesVersion,
 		ControlPlaneVIP:               controlPlaneVIP,
+		ControlPlaneEndpoint:          apiControlPlaneEndpointFromDB(dbCluster),
 		EnableCPNodeRecycling:         &dbCluster.EnableCPNodeRecycling,
 		TeleportEnabled:               &dbCluster.TeleportEnabled,
 		ControlPlaneConfig:            apiControlPlaneConfigFromDB(dbCluster.ControlPlaneConfig),
@@ -1516,6 +1514,8 @@ func DBClusterFromAPI(req *api.CreateClusterRequest) (db.Cluster, error) {
 			ControlPlaneUpgrading: db.NewCondition(false, "No upgrade in progress"),
 		},
 	}
+
+	applyControlPlaneEndpoint(&cluster, req)
 
 	switch {
 	case req.Nico != nil:

@@ -205,6 +205,10 @@ func (w *DB) UpdateClusterNextCertRenewalDue(ctx context.Context, clusterID uuid
 	return w.DB.UpdateClusterNextCertRenewalDue(ctx, clusterID, nextDue)
 }
 
+func (w *DB) SetClusterControlPlaneEndpoint(ctx context.Context, clusterID uuid.UUID, host string, port int) error {
+	return w.DB.SetClusterControlPlaneEndpoint(ctx, clusterID, host, port)
+}
+
 func (w *DB) DeleteCluster(ctx context.Context, id uuid.UUID) error {
 	if err := w.DB.DeleteCluster(ctx, id); err != nil {
 		return err

@@ -55,7 +55,7 @@ func (r *reconciler) reconcileNodesNeedingRollout(
 		target := cluster.ControlPlaneConfig.DesiredCount + cp.surgeBudget()
 		if deficit := target - cp.countControllerManagedNodes(); deficit > 0 {
 			if r.controlPlaneReplacementBlocked(cluster) {
-				logger.Warn("Skipping control plane scale-up because controlPlaneVIP is not configured",
+				logger.Warn("Skipping control plane scale-up because no control-plane endpoint is configured",
 					"nodesNeedingRolloutCount", len(nodesNeedingRollout))
 				return false, nil
 			}

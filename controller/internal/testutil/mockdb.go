@@ -86,6 +86,10 @@ func (m *MockDB) UpdateClusterNextCertRenewalDue(ctx context.Context, clusterID 
 	return args.Error(0)
 }
 
+func (m *MockDB) SetClusterControlPlaneEndpoint(ctx context.Context, clusterID uuid.UUID, host string, port int) error {
+	return m.Called(ctx, clusterID, host, port).Error(0)
+}
+
 func (m *MockDB) DeleteCluster(ctx context.Context, clusterID uuid.UUID) error {
 	args := m.Called(ctx, clusterID)
 	return args.Error(0)
@@ -332,6 +336,10 @@ func (m *MockTx) UpdateCluster(ctx context.Context, cluster *db.Cluster) (db.Clu
 func (m *MockTx) UpdateClusterNextCertRenewalDue(ctx context.Context, clusterID uuid.UUID, nextDue time.Time) error {
 	args := m.Called(ctx, clusterID, nextDue)
 	return args.Error(0)
+}
+
+func (m *MockTx) SetClusterControlPlaneEndpoint(ctx context.Context, clusterID uuid.UUID, host string, port int) error {
+	return m.Called(ctx, clusterID, host, port).Error(0)
 }
 
 func (m *MockTx) UpdateClusterConditions(ctx context.Context, cluster *db.Cluster) error {
