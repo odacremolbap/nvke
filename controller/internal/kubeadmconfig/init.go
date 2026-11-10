@@ -66,6 +66,13 @@ type InitConfig struct {
 	// --secondary-node-eviction-rate entirely. Defaults to "50" (upstream
 	// default).
 	LargeClusterSizeThreshold string
+	// APIServerCertSANs are added to the API server certificate, on top of those
+	// kubeadm derives from APIServerEndpoint.
+	APIServerCertSANs []string
+	// LoadBalancedEndpoint is set when APIServerEndpoint is a load balancer in front
+	// of the control planes. The API server then keeps serving longer while it shuts
+	// down, so the load balancer's health check can take it out of rotation.
+	LoadBalancedEndpoint bool
 }
 
 // Render generates the bootstrap artifacts for kubeadm init.
@@ -116,7 +123,7 @@ func (config *InitConfig) Render() (*BootstrapArtifacts, error) {
 		ConfigYAML: configYAML,
 		Files: []File{
 			kubeletConfigurationPatch(cfg.SystemReservedMemory, cfg.KubeReservedMemory),
-			apiServerTerminationGracePatch(),
+			apiServerTerminationGracePatch(cfg.LoadBalancedEndpoint),
 			apiServerAuditPolicyFile(),
 		},
 	}
@@ -264,6 +271,11 @@ func clusterConfiguration(config *InitConfig) kubeadmv1beta3.ClusterConfiguratio
 		},
 		TimeoutForControlPlane: &metav1.Duration{Duration: 4 * time.Minute},
 	}
+
+	if config.LoadBalancedEndpoint {
+		apiServer.ExtraArgs["shutdown-delay-duration"] = loadBalancerAPIServerShutdownDelay
+	}
+	apiServer.CertSANs = config.APIServerCertSANs
 
 	// KEP-4639 image volumes are stripped during admission when the gate is off,
 	// so a manifest mounting a plugin through an `image:` volume fails with a

@@ -97,6 +97,13 @@ const (
 	defaultSystemReservedMemory              = "16Gi"
 	defaultKubeReservedMemory                = "2Gi"
 	defaultAPIServerTerminationGrace         = 45
+	// loadBalancerAPIServerShutdownDelay keeps a shutting-down kube-apiserver serving
+	// while it reports /readyz unready, so a load balancer health check can take it
+	// out of rotation. A kube-vip endpoint moves with the node and needs less.
+	loadBalancerAPIServerShutdownDelay = "30s"
+	// loadBalancerAPIServerTerminationGrace covers the shutdown delay, the watch
+	// termination grace period and the drain that follows them.
+	loadBalancerAPIServerTerminationGrace = 75
 	// defaultEnabledAdmissionPlugins overrides kubeadm's own default
 	// enable-admission-plugins value rather than adding to it — kubeadm merges
 	// apiServer.extraArgs into its defaults by flag key, so the value supplied
@@ -412,7 +419,11 @@ func encryptionExtraArgs() (string, string) {
 	return defaultEncryptionConfigPath, "true"
 }
 
-func apiServerTerminationGracePatch() File {
+func apiServerTerminationGracePatch(loadBalancedEndpoint bool) File {
+	grace := defaultAPIServerTerminationGrace
+	if loadBalancedEndpoint {
+		grace = loadBalancerAPIServerTerminationGrace
+	}
 	// terminationGracePeriodSeconds is a kube-apiserver static Pod field, not
 	// a kube-apiserver flag, so it has to be applied through a kubeadm patch.
 	return File{
@@ -425,7 +436,7 @@ metadata:
   name: kube-apiserver
 spec:
   terminationGracePeriodSeconds: %d
-`, defaultAPIServerTerminationGrace)),
+`, grace)),
 	}
 }
 

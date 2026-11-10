@@ -132,6 +132,16 @@ func (c *Controller) setControlPlaneEndpoint(ctx context.Context, cluster db.Clu
 		return nil
 	}
 
+	// A load balancer endpoint is owned by whoever created the load balancer, which
+	// can be the infrastructure provider. A different valid endpoint is theirs, and
+	// replacing it would point the CAPI controllers away from the cluster's own
+	// load balancer.
+	if current := capiCluster.Spec.ControlPlaneEndpoint; cluster.IsLoadBalancedEndpoint() && current.IsValid() {
+		c.logger.Warn("CAPI cluster control-plane endpoint differs from the cluster's; leaving it unchanged",
+			"clusterName", cluster.Name, "capiHost", current.Host, "capiPort", current.Port, "host", host, "port", port)
+		return nil
+	}
+
 	patch := ctrlclient.MergeFrom(capiCluster.DeepCopy())
 	capiCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
 		Host: host,

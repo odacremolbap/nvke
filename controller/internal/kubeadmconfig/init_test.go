@@ -350,3 +350,34 @@ func validInitConfig() *InitConfig {
 		Token:                 "abcdef.0123456789abcdef",
 	}
 }
+
+func TestInitConfigRenderLoadBalancedEndpoint(t *testing.T) {
+	config := validInitConfig()
+	config.APIServerEndpoint = "api.tenant-a.example.internal:6443"
+	config.APIServerCertSANs = []string{"api.tenant-a.example.internal"}
+	config.LoadBalancedEndpoint = true
+
+	artifacts, err := config.Render()
+	require.NoError(t, err)
+
+	yaml := string(artifacts.ConfigYAML)
+	assert.Contains(t, yaml, "controlPlaneEndpoint: api.tenant-a.example.internal:6443")
+	assert.Contains(t, yaml, "- api.tenant-a.example.internal")
+	assert.Contains(t, yaml, "name: shutdown-delay-duration\n    value: 30s")
+
+	var graceFile File
+	for _, file := range artifacts.Files {
+		if file.Path == defaultAPIServerPatchFile {
+			graceFile = file
+		}
+	}
+	assert.Contains(t, string(graceFile.Content), "terminationGracePeriodSeconds: 75")
+}
+
+func TestInitConfigRenderDefaultsKeepShutdownDelay(t *testing.T) {
+	artifacts, err := validInitConfig().Render()
+	require.NoError(t, err)
+
+	assert.Contains(t, string(artifacts.ConfigYAML), "name: shutdown-delay-duration\n    value: 10s")
+	assert.NotContains(t, string(artifacts.ConfigYAML), "certSANs")
+}
