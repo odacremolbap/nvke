@@ -1067,6 +1067,56 @@ components:
     #--------------------------------
     #  Cluster
     #--------------------------------
+    ControlPlaneEndpoint:
+      type: object
+      description: |
+        How the API server is reached. `type` says who manages the endpoint. Mutually
+        exclusive with `controlPlaneVIP`, which is the legacy form of `type: KubeVIP`.
+        The endpoint is immutable after the cluster is created, because it is baked
+        into certificates and every kubeconfig. Any type other than `KubeVIP` leaves
+        kube-vip unconfigured.
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [KubeVIP, Infrastructure, External]
+          description: |
+            `KubeVIP`: NVKE configures kube-vip for `kubeVIP.address`.
+            `Infrastructure`: the Cluster API infrastructure provider creates the load
+            balancer and reports its endpoint. Only for clusters on the generic CAPI provider.
+            `External`: a load balancer that already exists, at `external.host`.
+        kubeVIP:
+          $ref: '#/components/schemas/KubeVIPEndpoint'
+        external:
+          $ref: '#/components/schemas/ExternalEndpoint'
+    KubeVIPEndpoint:
+      type: object
+      description: Required when `type` is `KubeVIP`, and rejected for any other type.
+      required:
+        - address
+      properties:
+        address:
+          type: string
+          format: ipv4
+          description: Virtual IP for the API server. Same rules as `controlPlaneVIP`.
+    ExternalEndpoint:
+      type: object
+      description: Required when `type` is `External`, and rejected for any other type.
+      required:
+        - host
+      properties:
+        host:
+          type: string
+          description: DNS name or IPv4 address of the load balancer. It must not change for the life of the cluster.
+          example: api.tenant-a.example.internal
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 6443
+          description: TCP port of the load balancer. Defaults to 6443.
+          x-go-type-skip-optional-pointer: true
     CreateClusterRequest:
       type: object
       required:
@@ -1143,6 +1193,8 @@ components:
             Quorum, health and deletion protections still apply.
           x-go-type-skip-optional-pointer: true
           x-order: 9
+        controlPlaneEndpoint:
+          $ref: '#/components/schemas/ControlPlaneEndpoint'
         teleportEnabled:
           x-fern-ignore: true
           type: boolean
@@ -1550,6 +1602,8 @@ components:
           format: ipv4
           description: API server VIP, if configured.
           x-order: 10
+        controlPlaneEndpoint:
+          $ref: '#/components/schemas/ControlPlaneEndpoint'
         enableCPNodeRecycling:
           type: boolean
           default: false
