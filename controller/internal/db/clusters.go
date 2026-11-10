@@ -77,19 +77,25 @@ type LaunchLayerClusterProvider struct {
 }
 
 type Cluster struct {
-	ID                    uuid.UUID  `bun:"type:uuid,pk,default:gen_random_uuid()"`
-	Name                  string     `bun:"type:text,notnull"`
-	CniPlugin             CniPlugin  `bun:"type:text"`
-	CniVersion            string     `bun:"type:text"`
-	EtcdEncrypted         bool       `bun:"type:boolean,notnull,default:false"`
-	KubernetesVersion     string     `bun:"type:text,notnull"`
-	ControlPlaneVIP       string     `bun:"type:text"`
-	EnableCPNodeRecycling bool       `bun:"type:boolean,notnull,default:false"`
-	TeleportEnabled       bool       `bun:"type:boolean,notnull,default:false"`
-	PodCIDR               string     `bun:"pod_cidr,type:text,notnull,default:'192.168.0.0/16'"`
-	ServiceCIDR           string     `bun:"service_cidr,type:text,notnull,default:'10.96.0.0/12'"`
-	OIDCAuthEnabled       bool       `bun:"type:boolean,notnull,default:false"`
-	NextCertRenewalDue    *time.Time `bun:"type:timestamptz"`
+	ID                uuid.UUID `bun:"type:uuid,pk,default:gen_random_uuid()"`
+	Name              string    `bun:"type:text,notnull"`
+	CniPlugin         CniPlugin `bun:"type:text"`
+	CniVersion        string    `bun:"type:text"`
+	EtcdEncrypted     bool      `bun:"type:boolean,notnull,default:false"`
+	KubernetesVersion string    `bun:"type:text,notnull"`
+	ControlPlaneVIP   string    `bun:"type:text"`
+	// ControlPlaneEndpointType, ControlPlaneEndpointHost and ControlPlaneEndpointPort
+	// describe a non-kube-vip API server endpoint. Read them through EndpointType and
+	// ControlPlaneEndpointAddress, which also cover rows that predate them.
+	ControlPlaneEndpointType ControlPlaneEndpointType `bun:"control_plane_endpoint_type,type:text,nullzero"`
+	ControlPlaneEndpointHost string                   `bun:"control_plane_endpoint_host,type:text,nullzero"`
+	ControlPlaneEndpointPort int                      `bun:"control_plane_endpoint_port,type:integer,nullzero"`
+	EnableCPNodeRecycling    bool                     `bun:"type:boolean,notnull,default:false"`
+	TeleportEnabled          bool                     `bun:"type:boolean,notnull,default:false"`
+	PodCIDR                  string                   `bun:"pod_cidr,type:text,notnull,default:'192.168.0.0/16'"`
+	ServiceCIDR              string                   `bun:"service_cidr,type:text,notnull,default:'10.96.0.0/12'"`
+	OIDCAuthEnabled          bool                     `bun:"type:boolean,notnull,default:false"`
+	NextCertRenewalDue       *time.Time               `bun:"type:timestamptz"`
 
 	ProviderType ProviderType                `bun:"provider_type,type:text,notnull"`
 	Nico         *NicoClusterProvider        `bun:"nico,type:jsonb"`
@@ -122,6 +128,83 @@ type ClusterSpireServer struct {
 	Address     string    `json:"address"`
 	Port        int       `json:"port"`
 	RequestedAt time.Time `json:"requestedAt"`
+}
+
+// ControlPlaneEndpointType says who manages a cluster's API server endpoint.
+type ControlPlaneEndpointType string
+
+// Control plane endpoint types.
+const (
+	// ControlPlaneEndpointNone is a cluster with no stable endpoint: the API server
+	// is reached at the first control-plane node's IP.
+	ControlPlaneEndpointNone ControlPlaneEndpointType = ""
+	// ControlPlaneEndpointKubeVIP is a virtual IP that NVKE configures through kube-vip.
+	ControlPlaneEndpointKubeVIP ControlPlaneEndpointType = "KubeVIP"
+	// ControlPlaneEndpointInfrastructure is a load balancer that the Cluster API
+	// infrastructure provider creates and reports.
+	ControlPlaneEndpointInfrastructure ControlPlaneEndpointType = "Infrastructure"
+	// ControlPlaneEndpointExternal is a load balancer that exists before the cluster.
+	ControlPlaneEndpointExternal ControlPlaneEndpointType = "External"
+
+	// DefaultControlPlaneEndpointPort is the API server port of a load balancer endpoint
+	// that does not name one.
+	DefaultControlPlaneEndpointPort = 6443
+)
+
+// EndpointType returns the cluster's endpoint type. A row written before the type
+// column existed, or by an older controller, has no type: it is a kube-vip cluster
+// when it has a control_plane_vip, and has no stable endpoint otherwise.
+func (c *Cluster) EndpointType() ControlPlaneEndpointType {
+	if c.ControlPlaneEndpointType != ControlPlaneEndpointNone {
+		return c.ControlPlaneEndpointType
+	}
+	if strings.TrimSpace(c.ControlPlaneVIP) != "" {
+		return ControlPlaneEndpointKubeVIP
+	}
+	return ControlPlaneEndpointNone
+}
+
+// HasStableControlPlaneEndpoint reports whether the API server is reached at an
+// address that does not change when a control-plane node is replaced. Replacing,
+// upgrading and adding control-plane nodes require it.
+func (c *Cluster) HasStableControlPlaneEndpoint() bool {
+	return c.EndpointType() != ControlPlaneEndpointNone
+}
+
+// IsLoadBalancedEndpoint reports whether the API server endpoint is a load balancer
+// that NVKE does not configure, in front of the control planes.
+func (c *Cluster) IsLoadBalancedEndpoint() bool {
+	switch c.EndpointType() {
+	case ControlPlaneEndpointExternal, ControlPlaneEndpointInfrastructure:
+		return true
+	case ControlPlaneEndpointNone, ControlPlaneEndpointKubeVIP:
+		return false
+	}
+	return false
+}
+
+// UsesKubeVIP reports whether NVKE configures kube-vip for the cluster.
+func (c *Cluster) UsesKubeVIP() bool {
+	return c.EndpointType() == ControlPlaneEndpointKubeVIP
+}
+
+// ControlPlaneEndpointAddress returns the host and port the API server is reached at.
+// It returns an empty host when the cluster has no stable endpoint, or when the
+// infrastructure provider has not reported one yet.
+func (c *Cluster) ControlPlaneEndpointAddress() (string, int) {
+	switch c.EndpointType() {
+	case ControlPlaneEndpointKubeVIP:
+		return strings.TrimSpace(c.ControlPlaneVIP), DefaultControlPlaneEndpointPort
+	case ControlPlaneEndpointExternal, ControlPlaneEndpointInfrastructure:
+		port := c.ControlPlaneEndpointPort
+		if port == 0 {
+			port = DefaultControlPlaneEndpointPort
+		}
+		return strings.TrimSpace(c.ControlPlaneEndpointHost), port
+	case ControlPlaneEndpointNone:
+		return "", DefaultControlPlaneEndpointPort
+	}
+	return "", DefaultControlPlaneEndpointPort
 }
 
 func (c *Cluster) NicoProvider() (NicoClusterProvider, error) {
@@ -608,6 +691,9 @@ type ClusterQueries interface {
 	CreateCluster(ctx context.Context, cluster *Cluster) (Cluster, error)
 	UpdateCluster(ctx context.Context, cluster *Cluster) (Cluster, error)
 	UpdateClusterNextCertRenewalDue(ctx context.Context, clusterID uuid.UUID, nextDue time.Time) error
+	// SetClusterControlPlaneEndpoint records the host and port an infrastructure provider
+	// reported for a cluster of type Infrastructure. It changes no other cluster.
+	SetClusterControlPlaneEndpoint(ctx context.Context, clusterID uuid.UUID, host string, port int) error
 	// UpdateClusterConditions writes only the conditions column and leaves
 	// updated_at alone, for periodic observations that are not cluster changes.
 	UpdateClusterConditions(ctx context.Context, cluster *Cluster) error
@@ -703,6 +789,20 @@ func (q *queriesImpl) UpdateClusterNextCertRenewalDue(ctx context.Context, clust
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to update cluster next cert renewal due: %w", err)
+	}
+	return notFoundErrIfNoRowsAffected(res)
+}
+
+func (q *queriesImpl) SetClusterControlPlaneEndpoint(ctx context.Context, clusterID uuid.UUID, host string, port int) error {
+	res, err := q.db.NewUpdate().
+		Model(&Cluster{}).
+		Set("control_plane_endpoint_host = ?", host).
+		Set("control_plane_endpoint_port = ?", port).
+		Where("id = ?", clusterID).
+		Where("control_plane_endpoint_type = ?", ControlPlaneEndpointInfrastructure).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to set cluster control-plane endpoint: %w", err)
 	}
 	return notFoundErrIfNoRowsAffected(res)
 }
