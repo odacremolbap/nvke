@@ -36,6 +36,13 @@ const (
 	ConditionStatusUnknown ConditionStatus = "Unknown"
 )
 
+// Defines values for ControlPlaneEndpointType.
+const (
+	ControlPlaneEndpointTypeExternal       ControlPlaneEndpointType = "External"
+	ControlPlaneEndpointTypeInfrastructure ControlPlaneEndpointType = "Infrastructure"
+	ControlPlaneEndpointTypeKubeVIP        ControlPlaneEndpointType = "KubeVIP"
+)
+
 // Defines values for CreateClusterRequestCniPlugin.
 const (
 	CreateClusterRequestCniPluginCalico        CreateClusterRequestCniPlugin = "calico"
@@ -240,6 +247,13 @@ type Cluster struct {
 
 	// ControlPlaneConfig Current control-plane configuration.
 	ControlPlaneConfig *ControlPlaneConfig `json:"controlPlaneConfig,omitempty"`
+
+	// ControlPlaneEndpoint How the API server is reached. `type` says who manages the endpoint. Mutually
+	// exclusive with `controlPlaneVIP`, which is the legacy form of `type: KubeVIP`.
+	// The endpoint is immutable after the cluster is created, because it is baked
+	// into certificates and every kubeconfig. Any type other than `KubeVIP` leaves
+	// kube-vip unconfigured.
+	ControlPlaneEndpoint *ControlPlaneEndpoint `json:"controlPlaneEndpoint,omitempty"`
 
 	// Infra Infra provider fields.
 	Infra *InfraClusterProvider `json:"infra,omitempty"`
@@ -450,6 +464,31 @@ type ControlPlaneConfigHistory struct {
 	Changes []ControlPlaneConfigChange `json:"changes"`
 }
 
+// ControlPlaneEndpoint How the API server is reached. `type` says who manages the endpoint. Mutually
+// exclusive with `controlPlaneVIP`, which is the legacy form of `type: KubeVIP`.
+// The endpoint is immutable after the cluster is created, because it is baked
+// into certificates and every kubeconfig. Any type other than `KubeVIP` leaves
+// kube-vip unconfigured.
+type ControlPlaneEndpoint struct {
+	// External Required when `type` is `External`, and rejected for any other type.
+	External *ExternalEndpoint `json:"external,omitempty"`
+
+	// KubeVIP Required when `type` is `KubeVIP`, and rejected for any other type.
+	KubeVIP *KubeVIPEndpoint `json:"kubeVIP,omitempty"`
+
+	// Type `KubeVIP`: NVKE configures kube-vip for `kubeVIP.address`.
+	// `Infrastructure`: the Cluster API infrastructure provider creates the load
+	// balancer and reports its endpoint. Only for clusters on the generic CAPI provider.
+	// `External`: a load balancer that already exists, at `external.host`.
+	Type ControlPlaneEndpointType `json:"type"`
+}
+
+// ControlPlaneEndpointType `KubeVIP`: NVKE configures kube-vip for `kubeVIP.address`.
+// `Infrastructure`: the Cluster API infrastructure provider creates the load
+// balancer and reports its endpoint. Only for clusters on the generic CAPI provider.
+// `External`: a load balancer that already exists, at `external.host`.
+type ControlPlaneEndpointType string
+
 // ControlPlaneRolloutChange One rollout-relevant field whose pinned value differs from the desired value, as plain strings.
 type ControlPlaneRolloutChange struct {
 	// Field The rollout-relevant field that changed (e.g. kubernetesVersion, release).
@@ -632,6 +671,13 @@ type CreateClusterRequest struct {
 	// for a NICo cluster. `launchLayer` is required for a LaunchLayer cluster.
 	ControlPlaneConfig *CreateClusterControlPlaneConfig `json:"controlPlaneConfig,omitempty"`
 
+	// ControlPlaneEndpoint How the API server is reached. `type` says who manages the endpoint. Mutually
+	// exclusive with `controlPlaneVIP`, which is the legacy form of `type: KubeVIP`.
+	// The endpoint is immutable after the cluster is created, because it is baked
+	// into certificates and every kubeconfig. Any type other than `KubeVIP` leaves
+	// kube-vip unconfigured.
+	ControlPlaneEndpoint *ControlPlaneEndpoint `json:"controlPlaneEndpoint,omitempty"`
+
 	// Infra CAPI infrastructure fields for a cluster: the caller supplies the CAPI manifests
 	// directly. Not to be used merely because a cluster is provisioned through CAPI —
 	// `nico` clusters may be too. Mutually exclusive with `nico`.
@@ -769,6 +815,15 @@ type EtcdKeyRotationStatusPhase string
 // EtcdKeyRotationStatusState Whether the owned rotation is running, succeeded, or failed.
 type EtcdKeyRotationStatusState string
 
+// ExternalEndpoint Required when `type` is `External`, and rejected for any other type.
+type ExternalEndpoint struct {
+	// Host DNS name or IPv4 address of the load balancer. It must not change for the life of the cluster.
+	Host string `json:"host"`
+
+	// Port TCP port of the load balancer. Defaults to 6443.
+	Port int `json:"port,omitempty"`
+}
+
 // GenericError Error response body.
 type GenericError struct {
 	// Message What went wrong.
@@ -845,6 +900,12 @@ type InfraNodeSetProvider struct {
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
+}
+
+// KubeVIPEndpoint Required when `type` is `KubeVIP`, and rejected for any other type.
+type KubeVIPEndpoint struct {
+	// Address Virtual IP for the API server. Same rules as `controlPlaneVIP`.
+	Address string `json:"address"`
 }
 
 // LaunchLayerClusterOwner The LaunchLayer identity requests are attributed to.
