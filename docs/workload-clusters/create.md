@@ -77,11 +77,39 @@ The cluster spec is a YAML file that describes the cluster, its control plane an
    | `cniPlugin` | `ovn-kubernetes` | `cniVersion` defaults to `2.4.2`, the version the node image carries. |
    | `etcdEncrypted` | None, required | Encrypts etcd at rest. You can turn encryption on later, but not off. |
    | `controlPlaneVIP` | None | Without a VIP, the API endpoint is the first control-plane node's IP. By default, `desiredCount` must be `1`, and you cannot later scale the control plane above one node, upgrade it or replace its nodes. The [development override](#change-cluster-settings-after-creation) permits those operations without a VIP. Recreate the cluster to add a VIP. |
+   | `controlPlaneEndpoint` | None | A stable API endpoint other than a kube-vip VIP, for clusters behind a load balancer. Cannot be combined with `controlPlaneVIP`. See [Use a load balancer as the API endpoint](#use-a-load-balancer-as-the-api-endpoint). |
    | `network.podCIDR` | `192.168.0.0/16` | Private IPv4 CIDRs, comma-separated, each `/12` to `/23`. Needs one `/24` for every node in the request, plus one. |
    | `network.serviceCIDR` | `10.96.0.0/12` | Private IPv4, `/12` to `/24`. |
    | `nico.orgID`, `siteID`, `vpcID` | None, required | Fixed for the life of the cluster. |
 
    The network cannot be changed after creation.
+
+   ### Use a load balancer as the API endpoint
+
+   Set `controlPlaneEndpoint` instead of `controlPlaneVIP` when a load balancer fronts the control plane, for example on a cloud where kube-vip cannot move an address. `type` says who manages the endpoint:
+
+   ```yaml
+   # A load balancer that already exists
+   controlPlaneEndpoint:
+     type: External
+     external:
+       host: <API_HOST>   # DNS name or IPv4
+       port: 6443         # optional, default 6443
+
+   # A load balancer that the Cluster API infrastructure provider creates (infra clusters only)
+   controlPlaneEndpoint:
+     type: Infrastructure
+
+   # kube-vip, the same as controlPlaneVIP
+   controlPlaneEndpoint:
+     type: KubeVIP
+     kubeVIP:
+       address: <API_VIP>
+   ```
+
+   The endpoint is immutable after creation, because it is in the API server certificate and in every kubeconfig. NVKE does not configure kube-vip for `External` and `Infrastructure`, and the cluster can have several control-plane nodes, be upgraded and have its nodes replaced, as with a VIP.
+
+   The load balancer must pass TCP through to port 6443 on every control-plane node, ideally with a health check on HTTPS `/readyz`. A control-plane node must reach the API server through it, because kubeadm and the kubelet use the endpoint during init. The address or DNS name must never change. NVKE does not create, size or delete the load balancer for `External`. The API server waits 30 seconds after it starts shutting down so that the health check can take the node out of rotation.
 
 3. Review the control-plane and node pool settings.
 
