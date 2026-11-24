@@ -119,23 +119,23 @@ global:
 ovnkube-control-plane:
   ovnkubeControlPlane:
     image:
-      tag: ${IMAGE_TAG}
+      tag: "${IMAGE_TAG}"
 ovnkube-single-node-zone:
   ovnkubeSingleNodeZone:
     image:
-      tag: ${IMAGE_TAG}
+      tag: "${IMAGE_TAG}"
   ovnkubeSingleNodeZoneNbdb:
     image:
-      tag: ${IMAGE_TAG}
+      tag: "${IMAGE_TAG}"
   ovnkubeSingleNodeZoneSbdb:
     image:
-      tag: ${IMAGE_TAG}
+      tag: "${IMAGE_TAG}"
   ovnkubeSingleNodeZoneNorthd:
     image:
-      tag: ${IMAGE_TAG}
+      tag: "${IMAGE_TAG}"
   ovnkubeSingleNodeZoneOvnHost:
     image:
-      tag: ${IMAGE_TAG}
+      tag: "${IMAGE_TAG}"
 EOF
 
 # The embedded image is the only one the node can run without a registry, so a
